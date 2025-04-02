@@ -45,7 +45,7 @@ class ModelConfig(BaseModelArgs):
 snac_model = SNAC.from_pretrained("mlx-community/snac_24khz").eval()
 
 
-def redistribute_codes(code_list):
+def decode_audio_from_codes(code_list):
     layer_1 = []
     layer_2 = []
     layer_3 = []
@@ -64,6 +64,29 @@ def redistribute_codes(code_list):
     ]
     audio_hat = snac_model.decode(codes).squeeze(-1)
     return audio_hat
+
+
+def encode_audio_to_codes(audio):
+    audio = audio[None, None, :]
+
+    codes = snac_model.encode(audio)
+
+    layer_1 = codes[0].squeeze(0).tolist()
+    layer_2 = codes[1].squeeze(0).tolist()
+    layer_3 = codes[2].squeeze(0).tolist()
+
+    code_list = []
+    num_groups = len(layer_1)
+    for i in range(num_groups):
+        code_list.append(layer_1[i])
+        code_list.append(layer_2[2 * i] + 4096)
+        code_list.append(layer_3[4 * i] + 2 * 4096)
+        code_list.append(layer_3[4 * i + 1] + 3 * 4096)
+        code_list.append(layer_2[2 * i + 1] + 4 * 4096)
+        code_list.append(layer_3[4 * i + 2] + 5 * 4096)
+        code_list.append(layer_3[4 * i + 3] + 6 * 4096)
+
+    return mx.array(code_list)[None, :]
 
 
 class Attention(nn.Module):
@@ -294,11 +317,26 @@ class Model(nn.Module):
         split_pattern: str = "\n",
         max_tokens: int = 1200,
         verbose: bool = False,
+        ref_audio: mx.array = None,
+        ref_text: Optional[str] = None,
         **kwargs,
     ):
         prompt = text.replace("\\n", "\n").replace("\\t", "\t")
         prompts = prompt.split(split_pattern)
-        prompts = [f"{voice}: " + p for p in prompts]
+
+        audio_input_ids = None
+        if ref_audio is not None and ref_text is not None:
+            audio_input_ids = encode_audio_to_codes(ref_audio) + 128266
+            audio_transcript_ids = mx.array(
+                self.tokenizer(ref_text, return_tensors="pt").input_ids
+            )
+        else:
+            prompts = [f"{voice}: " + p for p in prompts]
+
+        start_token = mx.array([[128259]], dtype=mx.int64)  # Start of human
+        end_tokens = mx.array(
+            [[128009, 128260]], dtype=mx.int64
+        )  # End of text, End of human
 
         all_input_ids = []
 
@@ -306,19 +344,32 @@ class Model(nn.Module):
             input_ids = mx.array(self.tokenizer(prompt, return_tensors="pt").input_ids)
             all_input_ids.append(input_ids)
 
-        start_token = mx.array([[128259]], dtype=mx.int64)  # Start of human
-        end_tokens = mx.array(
-            [[128009, 128260]], dtype=mx.int64
-        )  # End of text, End of human
-
         all_modified_input_ids = []
         for input_ids in all_input_ids:
+            # reference audio and transcript
+            if audio_input_ids is not None:
+                audio_start_tokens = mx.array([[128261, 128257]], dtype=mx.int64)
+                audio_end_tokens = mx.array([[128258, 128262]], dtype=mx.int64)
+                modified_input_ids = mx.concatenate(
+                    [
+                        start_token,
+                        audio_transcript_ids,
+                        end_tokens,
+                        audio_start_tokens,
+                        audio_input_ids,
+                        audio_end_tokens,
+                    ],
+                    axis=1,
+                )
+                all_modified_input_ids.append(modified_input_ids)
+
+            # prompt
             modified_input_ids = mx.concatenate(
                 [start_token, input_ids, end_tokens], axis=1
             )  # SOH SOT Text EOT EOH
             all_modified_input_ids.append(modified_input_ids)
 
-        input_ids = mx.concatenate(all_modified_input_ids, axis=0)
+        input_ids = mx.concatenate(all_modified_input_ids, axis=1)
 
         sampler = make_sampler(temperature, top_p, top_k=kwargs.get("top_k", -1))
         logits_processors = make_logits_processors(
@@ -355,7 +406,7 @@ class Model(nn.Module):
 
         my_samples = []
         for code_list in code_lists:
-            samples = redistribute_codes(code_list)
+            samples = decode_audio_from_codes(code_list)
             my_samples.append(samples)
 
         time_end = time.time()
