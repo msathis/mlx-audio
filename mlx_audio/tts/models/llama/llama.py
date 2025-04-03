@@ -328,9 +328,9 @@ class Model(nn.Module):
         if ref_audio is not None and ref_text is not None:
             print("\033[93mWARNING: Audio cloning doesn't work reliably on Orpheus.\033[0m \nA known issue affecting Torch and MLX versions. \nWill be fixed once the Canopy labs repo update their code or the model.")
             audio_input_ids = encode_audio_to_codes(ref_audio) + 128266
-            audio_transcript_ids = mx.array(
-                self.tokenizer(ref_text, return_tensors="pt").input_ids
-            )
+            audio_transcript_ids = self.tokenizer(
+                ref_text, return_tensors="mlx"
+            ).input_ids
         else:
             prompts = [f"{voice}: " + p for p in prompts]
 
@@ -342,7 +342,7 @@ class Model(nn.Module):
         all_input_ids = []
 
         for prompt in prompts:
-            input_ids = mx.array(self.tokenizer(prompt, return_tensors="pt").input_ids)
+            input_ids = self.tokenizer(prompt, return_tensors="mlx").input_ids
             all_input_ids.append(input_ids)
 
         all_modified_input_ids = []
