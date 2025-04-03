@@ -326,6 +326,7 @@ class Model(nn.Module):
 
         audio_input_ids = None
         if ref_audio is not None and ref_text is not None:
+            print("\033[93mWARNING: Audio cloning doesn't work reliably on Orpheus.\033[0m \nA known issue affecting Torch and MLX versions. \nWill be fixed once the Canopy labs repo update their code or the model.")
             audio_input_ids = encode_audio_to_codes(ref_audio) + 128266
             audio_transcript_ids = mx.array(
                 self.tokenizer(ref_text, return_tensors="pt").input_ids
