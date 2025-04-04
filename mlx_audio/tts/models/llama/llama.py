@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -308,22 +308,13 @@ class Model(nn.Module):
 
         return code_lists
 
-    def generate(
+    def prepare_input_ids(
         self,
-        text,
-        voice: str,
-        temperature: float = 0.6,
-        top_p: float = 0.8,
-        split_pattern: str = "\n",
-        max_tokens: int = 1200,
-        verbose: bool = False,
-        ref_audio: mx.array = None,
+        prompts: List[str],
+        voice: Optional[str] = None,
+        ref_audio: Optional[mx.array] = None,
         ref_text: Optional[str] = None,
-        **kwargs,
     ):
-        prompt = text.replace("\\n", "\n").replace("\\t", "\t")
-        prompts = prompt.split(split_pattern)
-
         audio_input_ids = None
         if ref_audio is not None and ref_text is not None:
             print(
@@ -333,7 +324,7 @@ class Model(nn.Module):
             audio_transcript_ids = self.tokenizer(
                 ref_text, return_tensors="mlx"
             ).input_ids
-        else:
+        elif voice is not None:
             prompts = [f"{voice}: " + p for p in prompts]
 
         start_token = mx.array([[128259]], dtype=mx.int64)  # Start of human
@@ -384,6 +375,32 @@ class Model(nn.Module):
             batch_input_ids.append(mx.concatenate(modified_input_ids, axis=1))
 
         batch_input_ids = mx.concatenate(batch_input_ids, axis=0)
+        batch_mask = mx.where(batch_input_ids == pad_token, False, True)
+
+        return batch_input_ids, batch_mask
+
+    def generate(
+        self,
+        text,
+        voice: str,
+        temperature: float = 0.6,
+        top_p: float = 0.8,
+        split_pattern: str = "\n",
+        max_tokens: int = 1200,
+        verbose: bool = False,
+        ref_audio: mx.array = None,
+        ref_text: Optional[str] = None,
+        **kwargs,
+    ):
+        prompt = text.replace("\\n", "\n").replace("\\t", "\t")
+        prompts = prompt.split(split_pattern)
+
+        input_ids, _ = self.prepare_input_ids(
+            prompts,
+            voice,
+            ref_audio,
+            ref_text,
+        )
 
         sampler = make_sampler(temperature, top_p, top_k=kwargs.get("top_k", -1))
         logits_processors = make_logits_processors(
@@ -399,7 +416,7 @@ class Model(nn.Module):
                 stream_generate(
                     self,
                     tokenizer=self.tokenizer,
-                    prompt=batch_input_ids.squeeze(0),
+                    prompt=input_ids.squeeze(0),
                     max_tokens=max_tokens,
                     sampler=sampler,
                     logits_processors=logits_processors,
@@ -411,7 +428,7 @@ class Model(nn.Module):
             next_token = mx.array([response.token])
             input_ids = mx.concatenate([input_ids, next_token[None, :]], axis=1)
             if i % 50 == 0:
-                mx.metal.clear_cache()
+                mx.clear_cache()
 
             if next_token == 128258:
                 break
@@ -435,7 +452,7 @@ class Model(nn.Module):
                 assert samples > 0, "No audio generated"
 
                 # Calculate token count
-                token_count = len(input_ids) if input_ids is not None else 0
+                token_count = input_ids.shape[1] if input_ids is not None else 0
 
                 # Calculate audio duration in seconds
                 sample_rate = 24000  # Assuming 24kHz sample rate, adjust if different
@@ -475,5 +492,5 @@ class Model(nn.Module):
                         ),
                     },
                     processing_time_seconds=time_end - time_start,
-                    peak_memory_usage=mx.metal.get_peak_memory() / 1e9,
+                    peak_memory_usage=mx.get_peak_memory() / 1e9,
                 )
