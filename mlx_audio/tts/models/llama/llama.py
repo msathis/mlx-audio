@@ -4,11 +4,11 @@ from typing import Any, Dict, Optional, Union
 
 import mlx.core as mx
 import mlx.nn as nn
+from mlx_lm.generate import stream_generate
 from mlx_lm.models import cache as cache_utils
 from mlx_lm.models.base import BaseModelArgs, create_attention_mask
 from mlx_lm.models.rope_utils import initialize_rope
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
-from mlx_lm.utils import stream_generate
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
