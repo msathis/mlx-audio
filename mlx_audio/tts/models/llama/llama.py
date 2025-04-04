@@ -341,19 +341,28 @@ class Model(nn.Module):
             [[128009, 128260]], dtype=mx.int64
         )  # End of text, End of human
 
-        all_input_ids = []
-
+        prompt_input_ids = []
         for prompt in prompts:
-            input_ids = self.tokenizer(prompt, return_tensors="mlx").input_ids
-            all_input_ids.append(input_ids)
+            prompt_input_ids.append(
+                self.tokenizer(prompt, return_tensors="mlx").input_ids
+            )
 
-        all_modified_input_ids = []
-        for input_ids in all_input_ids:
+        batch_input_ids = []
+        pad_token = mx.array([128263], dtype=mx.int64)
+        max_len = max([p.shape[1] for p in prompt_input_ids])
+
+        for input_ids in prompt_input_ids:
+            modified_input_ids = []
+
+            padding_len = max_len - input_ids.shape[1]
+            if padding_len > 0:
+                modified_input_ids.append(mx.repeat(pad_token, padding_len)[None, :])
+
             # reference audio and transcript
             if audio_input_ids is not None:
                 audio_start_tokens = mx.array([[128261, 128257]], dtype=mx.int64)
                 audio_end_tokens = mx.array([[128258, 128262]], dtype=mx.int64)
-                modified_input_ids = mx.concatenate(
+                ref_input_ids = mx.concatenate(
                     [
                         start_token,
                         audio_transcript_ids,
@@ -364,15 +373,17 @@ class Model(nn.Module):
                     ],
                     axis=1,
                 )
-                all_modified_input_ids.append(modified_input_ids)
+                modified_input_ids.append(ref_input_ids)
 
             # prompt
-            modified_input_ids = mx.concatenate(
+            one_prompt_input_ids = mx.concatenate(
                 [start_token, input_ids, end_tokens], axis=1
             )  # SOH SOT Text EOT EOH
-            all_modified_input_ids.append(modified_input_ids)
+            modified_input_ids.append(one_prompt_input_ids)
 
-        input_ids = mx.concatenate(all_modified_input_ids, axis=1)
+            batch_input_ids.append(mx.concatenate(modified_input_ids, axis=1))
+
+        batch_input_ids = mx.concatenate(batch_input_ids, axis=0)
 
         sampler = make_sampler(temperature, top_p, top_k=kwargs.get("top_k", -1))
         logits_processors = make_logits_processors(
@@ -388,7 +399,7 @@ class Model(nn.Module):
                 stream_generate(
                     self,
                     tokenizer=self.tokenizer,
-                    prompt=input_ids.squeeze(0),
+                    prompt=batch_input_ids.squeeze(0),
                     max_tokens=max_tokens,
                     sampler=sampler,
                     logits_processors=logits_processors,
