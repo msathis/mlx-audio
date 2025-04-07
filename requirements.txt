@@ -5,7 +5,7 @@ spacy>=3.8.4
 phonemizer-fork>=3.3.2
 espeakng-loader>=0.2.4
 mlx>=0.22.0
-mlx-vlm>=0.1.21
+mlx-vlm @ git+https://github.com/msathis/mlx-vlm@main
 mlx-lm>=0.22.2
 numpy>=1.26.4
 torch>=2.5.1
